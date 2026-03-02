@@ -43,11 +43,18 @@ def init_db(conn: sqlite3.Connection) -> None:
             task_categories TEXT,
             qa_content TEXT,
             saves_count INTEGER,
+            leaderboard_score INTEGER,
             rating REAL,
             rating_count INTEGER,
             scraped_at TEXT
         );
     """)
+    # Add columns that may not exist in older databases
+    for col, col_type in [("leaderboard_score", "INTEGER")]:
+        try:
+            conn.execute(f"ALTER TABLE agents ADD COLUMN {col} {col_type}")
+        except sqlite3.OperationalError:
+            pass  # column already exists
     conn.commit()
 
 
@@ -134,8 +141,9 @@ def upsert_agent(conn: sqlite3.Connection, data: dict) -> None:
         """INSERT OR REPLACE INTO agents
            (slug, name, taaft_url, external_url, description, pricing_model,
             is_agent_tagged, is_agent_inferred, agent_confidence_score,
-            task_categories, qa_content, saves_count, rating, rating_count, scraped_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            task_categories, qa_content, saves_count, leaderboard_score,
+            rating, rating_count, scraped_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             data["slug"],
             data.get("name"),
@@ -149,6 +157,7 @@ def upsert_agent(conn: sqlite3.Connection, data: dict) -> None:
             task_categories,
             qa_content,
             data.get("saves_count"),
+            data.get("leaderboard_score"),
             data.get("rating"),
             data.get("rating_count"),
             data.get("scraped_at"),

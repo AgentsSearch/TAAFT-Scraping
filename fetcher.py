@@ -8,6 +8,7 @@ import random
 from datetime import datetime, timezone
 
 from bs4 import BeautifulSoup
+from bs4.element import NavigableString
 from curl_cffi import requests as cffi_requests
 
 from config import (
@@ -105,8 +106,11 @@ def parse_tool_page(html: str, slug: str) -> dict:
     # Q&A content
     data["qa_content"] = _extract_qa_content(soup)
 
-    # Saves count
-    data["saves_count"] = _extract_saves_count(soup)
+    # Traffic count (opens)
+    data["saves_count"] = _extract_traffic_count(soup)
+
+    # Leaderboard score
+    data["leaderboard_score"] = _extract_leaderboard_score(soup)
 
     # Rating
     rating, rating_count = _extract_rating(soup)
@@ -214,16 +218,86 @@ def _detect_agent_link(soup: BeautifulSoup) -> bool:
     return False
 
 
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001F600-\U0001F64F"  # emoticons
+    "\U0001F300-\U0001F5FF"  # symbols & pictographs
+    "\U0001F680-\U0001F6FF"  # transport & map
+    "\U0001F1E0-\U0001F1FF"  # flags
+    "\U00002700-\U000027BF"  # dingbats
+    "\U0001F900-\U0001F9FF"  # supplemental symbols
+    "\U0001FA00-\U0001FA6F"  # chess symbols
+    "\U0001FA70-\U0001FAFF"  # symbols extended-A
+    "\U00002702-\U000027B0"  # dingbats
+    "\U0000FE00-\U0000FE0F"  # variation selectors
+    "\U0000200D"             # zero width joiner
+    "\U000020E3"             # combining enclosing keycap
+    "\U00002600-\U000026FF"  # misc symbols
+    "]+",
+    flags=re.UNICODE,
+)
+
+
 def _extract_task_categories(soup: BeautifulSoup) -> list[str]:
-    """Extract all task category labels from /task/ links."""
-    categories = []
-    seen = set()
-    for a in soup.find_all("a", href=True):
-        if "/task/" in a["href"]:
-            text = a.get_text(strip=True)
+    """Extract task categories from the breadcrumb path at the top of the page.
+
+    Looks for <span class="breadcrumb breadcrumb-for-task"> elements inside
+    the breadcrumbs_wrap container.  These represent the hierarchical category
+    path shown on each tool page (e.g. Work > Business > Industries > AI >
+    Models > Large Language Models).
+
+    Falls back to scanning /task/ links in the breadcrumbs container if the
+    span-based approach yields nothing.
+    """
+    categories: list[str] = []
+    seen: set[str] = set()
+
+    # Locate the breadcrumbs container
+    bc_wrap = soup.find("div", class_="breadcrumbs_wrap") or soup.find("div", class_="breadcrumbs")
+    if not bc_wrap:
+        # Fallback: try by id
+        bc_wrap = soup.find(id="breadcrumbs_wrap") or soup.find(id="breadcrumbs")
+
+    if bc_wrap:
+        # Strategy 1: breadcrumb spans (preferred)
+        for span in bc_wrap.find_all("span", class_=lambda c: c and "breadcrumb-for-task" in c):
+            # Collect text only from direct children, skipping emoji and counter spans
+            parts = []
+            for child in span.find_all(recursive=False):
+                cls = " ".join(child.get("class", []))
+                if "emoji_icon" in cls or "breadcrumb_counter" in cls:
+                    continue
+                parts.append(child.get_text(strip=True))
+            # Also grab any direct text nodes on the span itself
+            for node in span.children:
+                if isinstance(node, str) and node.strip():
+                    parts.append(node.strip())
+            text = " ".join(p for p in parts if p).strip()
+            text = _EMOJI_RE.sub("", text).strip()
+            # Strip all digits and commas
+            text = re.sub(r"[\d,]+", "", text).strip()
             if text and text.lower() not in seen:
                 seen.add(text.lower())
                 categories.append(text)
+
+        if categories:
+            return categories
+
+        # Strategy 2: /task/ links inside breadcrumbs container
+        for a in bc_wrap.find_all("a", href=True):
+            if "/task/" not in a["href"]:
+                continue
+            text = a.get_text(strip=True)
+            if not text:
+                continue
+            if text.lower().startswith("go to"):
+                text = text[5:].strip()
+            text = _EMOJI_RE.sub("", text).strip()
+            text = re.sub(r"\s*\([\d,]+\)\s*$", "", text).strip()
+            if text and text.lower() not in seen:
+                seen.add(text.lower())
+                categories.append(text)
+
     return categories
 
 
@@ -299,39 +373,31 @@ def _safe_parse_int(text: str) -> int | None:
     return None
 
 
-def _extract_saves_count(soup: BeautifulSoup) -> int | None:
-    """Extract the saves/bookmark count."""
-    # Look for save-related text patterns
-    for tag in soup.find_all(string=re.compile(r"\d[\d,]*\s*save", re.IGNORECASE)):
-        match = re.search(r"(\d[\d,]*)\s*save", tag, re.IGNORECASE)
-        if match:
-            num = _safe_parse_int(match.group(1))
-            if num is not None:
-                return num
+def _extract_traffic_count(soup: BeautifulSoup) -> int | None:
+    """Extract the tool's traffic/opens count from the header area.
 
-    # Look for elements with save-related classes
-    for tag in soup.find_all(["span", "div", "button"], class_=True):
-        classes = " ".join(tag.get("class", []))
-        if "save" in classes.lower() or "bookmark" in classes.lower():
-            text = tag.get_text(strip=True)
-            match = re.search(r"(\d[\d,]*)", text)
-            if match:
-                num = _safe_parse_int(match.group(1))
-                if num is not None and num > 0:
-                    return num
-
-    # Broader search for large numbers near save/bookmark icons
-    for tag in soup.find_all(["span", "div"]):
-        text = tag.get_text(strip=True)
-        if re.match(r"^\d[\d,]*$", text):
-            num = _safe_parse_int(text)
-            if num is not None and num > 10:
-                parent = tag.parent
-                if parent:
-                    parent_text = parent.get_text(" ", strip=True).lower()
-                    if "save" in parent_text or "bookmark" in parent_text:
+    The main tool's stats_opens lives inside the header column
+    (ancestor of the <h1>), NOT in the breadcrumb dropdown listings.
+    """
+    h1 = soup.find("h1")
+    if h1:
+        # Walk up to find the header column container
+        for parent in h1.parents:
+            cls = " ".join(parent.get("class", []))
+            if "header_col" in cls or "title_wrap" in cls:
+                el = parent.find("div", class_="stats_opens")
+                if el:
+                    num = _safe_parse_int(el.get_text(strip=True))
+                    if num is not None:
                         return num
+    return None
 
+
+def _extract_leaderboard_score(soup: BeautifulSoup) -> int | None:
+    """Extract the leaderboard score from <span class='score'>."""
+    el = soup.find("span", class_="score")
+    if el:
+        return _safe_parse_int(el.get_text(strip=True))
     return None
 
 
@@ -340,6 +406,29 @@ def _extract_rating(soup: BeautifulSoup) -> tuple[float | None, int | None]:
     rating = None
     count = None
 
+    a = soup.select_one("a.rating_top")
+    if a:
+        rating_span = a.select_one(":scope > span:not(.star)")
+        if rating_span:
+            direct_text = rating_span.find(string=True, recursive=False)
+            if direct_text and direct_text.strip():
+                try:
+                    rating = float(direct_text.strip())
+                except ValueError:
+                    pass
+
+        count_el = a.select_one(".ratings_count")
+        if count_el:
+            digits = re.sub(r"\D+", "", count_el.get_text(strip=True))
+            if digits:
+                try:
+                    count = int(digits)
+                except ValueError:
+                    pass
+
+    if rating is not None or count is not None:
+        return (rating or 0.0), (count or 0)
+    
     # Look for structured rating data (Schema.org)
     for script in soup.find_all("script", type="application/ld+json"):
         try:

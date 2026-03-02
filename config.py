@@ -25,7 +25,7 @@ DEFAULT_HEADERS = {
 
 # Rate limiting
 BASE_DELAY = (2.0, 5.0)       # random uniform seconds between requests
-MAX_PER_SESSION = 10          # stop after this many requests per run
+MAX_PER_SESSION = 100          # stop after this many requests per run
 BACKOFF_ON_429 = 60            # seconds to wait on 429
 MAX_RETRIES = 3
 

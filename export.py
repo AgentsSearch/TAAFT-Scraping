@@ -40,7 +40,8 @@ def export_json(conn, output_path: str, agents_only: bool = False) -> int:
             "agent_confidence_score": a["agent_confidence_score"],
             "task_categories": a["task_categories"],
             "qa_content": a["qa_content"],
-            "saves_count": a["saves_count"],
+            "traffic_count": a["saves_count"],
+            "leaderboard_score": a.get("leaderboard_score"),
             "rating": a["rating"],
             "scraped_at": a["scraped_at"],
         })
@@ -76,7 +77,8 @@ def export_csv(conn, output_path: str, agents_only: bool = False) -> int:
     fieldnames = [
         "slug", "name", "taaft_url", "external_url", "description",
         "pricing_model", "is_agent", "agent_confidence_score",
-        "task_categories", "qa_content", "saves_count", "rating", "scraped_at",
+        "task_categories", "qa_content", "saves_count", "leaderboard_score",
+        "rating", "scraped_at",
     ]
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
@@ -96,6 +98,7 @@ def export_csv(conn, output_path: str, agents_only: bool = False) -> int:
                 "task_categories": json.dumps(a["task_categories"]),
                 "qa_content": json.dumps(a["qa_content"]),
                 "saves_count": a["saves_count"],
+                "leaderboard_score": a.get("leaderboard_score"),
                 "rating": a["rating"],
                 "scraped_at": a["scraped_at"],
             }
