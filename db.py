@@ -42,15 +42,23 @@ def init_db(conn: sqlite3.Connection) -> None:
             agent_confidence_score INTEGER,
             task_categories TEXT,
             qa_content TEXT,
+            pros TEXT,
+            cons TEXT,
             saves_count INTEGER,
             leaderboard_score INTEGER,
             rating REAL,
             rating_count INTEGER,
+            last_updated TEXT,
             scraped_at TEXT
         );
     """)
     # Add columns that may not exist in older databases
-    for col, col_type in [("leaderboard_score", "INTEGER")]:
+    for col, col_type in [
+        ("leaderboard_score", "INTEGER"),
+        ("pros", "TEXT"),
+        ("cons", "TEXT"),
+        ("last_updated", "TEXT"),
+    ]:
         try:
             conn.execute(f"ALTER TABLE agents ADD COLUMN {col} {col_type}")
         except sqlite3.OperationalError:
@@ -136,14 +144,16 @@ def upsert_agent(conn: sqlite3.Connection, data: dict) -> None:
     # Serialize JSON fields
     task_categories = json.dumps(data.get("task_categories", []))
     qa_content = json.dumps(data.get("qa_content", []))
+    pros = json.dumps(data.get("pros", []))
+    cons = json.dumps(data.get("cons", []))
 
     conn.execute(
         """INSERT OR REPLACE INTO agents
            (slug, name, taaft_url, external_url, description, pricing_model,
             is_agent_tagged, is_agent_inferred, agent_confidence_score,
-            task_categories, qa_content, saves_count, leaderboard_score,
-            rating, rating_count, scraped_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            task_categories, qa_content, pros, cons, saves_count,
+            leaderboard_score, rating, rating_count, last_updated, scraped_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             data["slug"],
             data.get("name"),
@@ -156,10 +166,13 @@ def upsert_agent(conn: sqlite3.Connection, data: dict) -> None:
             data.get("agent_confidence_score", 0),
             task_categories,
             qa_content,
+            pros,
+            cons,
             data.get("saves_count"),
             data.get("leaderboard_score"),
             data.get("rating"),
             data.get("rating_count"),
+            data.get("last_updated"),
             data.get("scraped_at"),
         ),
     )
@@ -203,6 +216,8 @@ def get_all_agents(conn: sqlite3.Connection) -> list[dict]:
         d = dict(row)
         d["task_categories"] = json.loads(d["task_categories"]) if d["task_categories"] else []
         d["qa_content"] = json.loads(d["qa_content"]) if d["qa_content"] else []
+        d["pros"] = json.loads(d["pros"]) if d.get("pros") else []
+        d["cons"] = json.loads(d["cons"]) if d.get("cons") else []
         d["is_agent"] = bool(d["is_agent_tagged"] or d["is_agent_inferred"])
         result.append(d)
     return result

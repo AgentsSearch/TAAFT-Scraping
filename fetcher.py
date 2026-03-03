@@ -104,7 +104,11 @@ def parse_tool_page(html: str, slug: str) -> dict:
     data.update(agent_info)
 
     # Q&A content
-    data["qa_content"] = _extract_qa_content(soup)
+    # data["qa_content"] = _extract_qa_content(soup)
+
+    # Pros and cons
+    data["pros"] = _extract_pros(soup)
+    data["cons"] = _extract_cons(soup)
 
     # Traffic count (opens)
     data["saves_count"] = _extract_traffic_count(soup)
@@ -117,6 +121,9 @@ def parse_tool_page(html: str, slug: str) -> dict:
     data["rating"] = rating
     data["rating_count"] = rating_count
 
+    # Last updated (latest release date)
+    data["last_updated"] = _extract_last_updated(soup)
+
     # Timestamp
     data["scraped_at"] = datetime.now(timezone.utc).isoformat()
 
@@ -124,35 +131,37 @@ def parse_tool_page(html: str, slug: str) -> dict:
 
 
 def _extract_description(soup: BeautifulSoup) -> str | None:
-    """Extract the main description/overview text."""
-    # Try id="ai_overview" or similar
-    for selector_id in ("ai_overview", "overview", "description"):
-        section = soup.find(id=selector_id)
-        if section:
-            text = section.get_text(" ", strip=True)
-            if len(text) > 20:
-                return text
+    """Extract the main description text from div.ai_description.
 
-    # Try class-based search
-    for tag in soup.find_all(["div", "section", "p"], class_=True):
-        classes = " ".join(tag.get("class", []))
-        if "overview" in classes.lower() or "description" in classes.lower():
-            text = tag.get_text(" ", strip=True)
-            if len(text) > 20:
-                return text
+    Collects only the bare text nodes and <br>-separated paragraphs,
+    skipping child elements like h2, social links, and buttons.
+    """
+    desc_div = soup.find("div", class_="ai_description")
+    if desc_div:
+        # Remove child elements we don't want (headings, socials, buttons)
+        skip_tags = {"h2", "h3", "div", "a", "img", "button", "span"}
+        parts: list[str] = []
+        for node in desc_div.children:
+            if isinstance(node, str):
+                text = node.strip()
+                if text:
+                    parts.append(text)
+            elif node.name == "br":
+                continue  # line breaks become natural spacing
+            elif node.name not in skip_tags:
+                text = node.get_text(strip=True)
+                if text:
+                    parts.append(text)
+        text = " ".join(parts).strip()
+        # Collapse multiple spaces
+        text = re.sub(r"\s{2,}", " ", text)
+        if len(text) > 20:
+            return text
 
-    # Try meta description
+    # Fallback: meta description
     meta = soup.find("meta", attrs={"name": "description"})
     if meta and meta.get("content"):
         return meta["content"].strip()
-
-    # Try first substantial paragraph after h1
-    h1 = soup.find("h1")
-    if h1:
-        for sibling in h1.find_next_siblings(["p", "div"]):
-            text = sibling.get_text(strip=True)
-            if len(text) > 40:
-                return text
 
     return None
 
@@ -302,53 +311,40 @@ def _extract_task_categories(soup: BeautifulSoup) -> list[str]:
 
 
 def _extract_qa_content(soup: BeautifulSoup) -> list[dict]:
-    """Extract Q&A/FAQ pairs from the page."""
-    qa_pairs = []
+    """Extract Q&A pairs from the FAQ section.
 
-    # Try FAQ section by id
+    Returns a list of {"question": ..., "answer": ...} dicts.
+    Each pair comes from a div.faq-info containing a
+    div.faq-info-title (question) and div.faq-info-description (answer).
+    """
+    qa_pairs: list[dict] = []
+
     faq_section = soup.find(id="faq")
     if not faq_section:
-        # Try class-based search
         for tag in soup.find_all(["div", "section"], class_=True):
-            classes = " ".join(tag.get("class", []))
-            if "faq" in classes.lower():
+            if "faq" in " ".join(tag.get("class", [])).lower():
                 faq_section = tag
                 break
 
     if faq_section:
-        # Strategy 1: dt/dd pairs
-        dts = faq_section.find_all("dt")
-        dds = faq_section.find_all("dd")
-        for dt, dd in zip(dts, dds):
-            q = dt.get_text(strip=True)
-            a = dd.get_text(strip=True)
-            if q and a:
+        for item in faq_section.find_all("div", class_="faq-info"):
+            title = item.find("div", class_="faq-info-title")
+            desc = item.find("div", class_="faq-info-description")
+            if not title or not desc:
+                continue
+            # Skip "Show X more" and "Ask a question" entries
+            title_cls = " ".join(title.get("class", []))
+            if "faq_show_more" in title_cls:
+                continue
+            q = title.get_text(strip=True)
+            a = desc.get_text(strip=True)
+            if q and a and q.lower() != "ask a question":
                 qa_pairs.append({"question": q, "answer": a})
 
         if qa_pairs:
             return qa_pairs
 
-        # Strategy 2: heading + paragraph/div pairs
-        headings = faq_section.find_all(["h2", "h3", "h4", "strong"])
-        for heading in headings:
-            question = heading.get_text(strip=True)
-            answer_parts = []
-            for sibling in heading.find_next_siblings():
-                if sibling.name in ("h2", "h3", "h4", "strong"):
-                    break
-                text = sibling.get_text(strip=True)
-                if text:
-                    answer_parts.append(text)
-            if question and answer_parts:
-                qa_pairs.append({
-                    "question": question,
-                    "answer": " ".join(answer_parts),
-                })
-
-        if qa_pairs:
-            return qa_pairs
-
-    # Strategy 3: look for Schema.org FAQPage structured data
+    # Fallback: Schema.org FAQPage structured data
     for script in soup.find_all("script", type="application/ld+json"):
         try:
             ld = json.loads(script.string or "")
@@ -363,6 +359,60 @@ def _extract_qa_content(soup: BeautifulSoup) -> list[dict]:
             continue
 
     return qa_pairs
+
+
+def _extract_pros(soup: BeautifulSoup) -> list[str]:
+    """Extract pros from div.pac-info-item-pros > div.pac-elem elements."""
+    pros: list[str] = []
+    container = soup.find("div", class_="pac-info-item-pros")
+    if container:
+        for elem in container.find_all("div", class_="pac-elem"):
+            text = elem.get_text(strip=True)
+            if text:
+                pros.append(text)
+    return pros
+
+
+def _extract_cons(soup: BeautifulSoup) -> list[str]:
+    """Extract cons from div.pac-info-item-cons > div.pac-elem elements."""
+    cons: list[str] = []
+    container = soup.find("div", class_="pac-info-item-cons")
+    if container:
+        for elem in container.find_all("div", class_="pac-elem"):
+            text = elem.get_text(strip=True)
+            if text:
+                cons.append(text)
+    return cons
+
+
+def _extract_last_updated(soup: BeautifulSoup) -> str | None:
+    """Extract the latest release date from the releases section.
+
+    Finds all div.changelog_title elements inside #releases, parses
+    the dates, and returns the most recent one as YYYY-MM-DD.
+    Returns None if no releases section or no parseable dates exist.
+    """
+    releases = soup.find(id="releases")
+    if not releases:
+        return None
+
+    dates = []
+    for title_div in releases.find_all("div", class_="changelog_title"):
+        text = title_div.get_text(strip=True)
+        # Try parsing common date formats: "Feb 11, 2026" or "February 17, 2026"
+        for fmt in ("%b %d, %Y", "%B %d, %Y", "%b %d %Y", "%B %d %Y"):
+            try:
+                dt = datetime.strptime(text, fmt)
+                dates.append(dt)
+                break
+            except ValueError:
+                continue
+
+    if dates:
+        latest = max(dates)
+        return latest.strftime("%Y-%m-%d")
+
+    return None
 
 
 def _safe_parse_int(text: str) -> int | None:

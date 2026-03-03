@@ -37,12 +37,16 @@ def export_json(conn, output_path: str, agents_only: bool = False) -> int:
             "description": a["description"],
             "pricing_model": a["pricing_model"],
             "is_agent": a.get("is_agent", False),
-            "agent_confidence_score": a["agent_confidence_score"],
+            # "agent_confidence_score": a["agent_confidence_score"],
             "task_categories": a["task_categories"],
-            "qa_content": a["qa_content"],
+            # "qa_content": a["qa_content"],
+            "pros": a.get("pros", []),
+            "cons": a.get("cons", []),
             "traffic_count": a["saves_count"],
             "leaderboard_score": a.get("leaderboard_score"),
             "rating": a["rating"],
+            "rating_count": a.get("rating_count"),
+            "last_updated": a.get("last_updated"),
             "scraped_at": a["scraped_at"],
         })
 
@@ -77,8 +81,9 @@ def export_csv(conn, output_path: str, agents_only: bool = False) -> int:
     fieldnames = [
         "slug", "name", "taaft_url", "external_url", "description",
         "pricing_model", "is_agent", "agent_confidence_score",
-        "task_categories", "qa_content", "saves_count", "leaderboard_score",
-        "rating", "scraped_at",
+        "task_categories", "qa_content", "pros", "cons",
+        "traffic_count", "leaderboard_score", "rating", "rating_count",
+        "last_updated", "scraped_at",
     ]
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
@@ -96,10 +101,14 @@ def export_csv(conn, output_path: str, agents_only: bool = False) -> int:
                 "is_agent": a.get("is_agent", False),
                 "agent_confidence_score": a["agent_confidence_score"],
                 "task_categories": json.dumps(a["task_categories"]),
-                "qa_content": json.dumps(a["qa_content"]),
-                "saves_count": a["saves_count"],
+                # "qa_content": json.dumps(a["qa_content"]),
+                "pros": json.dumps(a.get("pros", [])),
+                "cons": json.dumps(a.get("cons", [])),
+                "traffic_count": a["saves_count"],
                 "leaderboard_score": a.get("leaderboard_score"),
                 "rating": a["rating"],
+                "rating_count": a.get("rating_count"),
+                "last_updated": a.get("last_updated"),
                 "scraped_at": a["scraped_at"],
             }
             writer.writerow(row)
