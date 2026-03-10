@@ -68,6 +68,35 @@ The scraper is resumable. Each run processes up to `MAX_PER_SESSION` (150) jobs 
 - **Log file**: `scraper.log`
 - **Export**: JSON or CSV via the `export` command
 
+## Schema Compatibility
+
+TAAFT exports consumer tool metadata. To use with `agent-indexing` or `probing-pipeline` (MCP schema):
+
+```bash
+python convert_to_mcp_schema.py -i agents.json -o agents_mcp.json
+```
+
+**TAAFT has (✅):**
+- `name`, `description`, `slug` → agent name, description, ID
+- `task_categories` → detected capabilities
+- `pros`, `cons` → extracted capabilities and limitations
+- `rating`, `rating_count` → community ratings
+- `external_url` → homepage link
+- `pricing_model` → pricing info
+
+**TAAFT lacks (❌):**
+- `tools.parameter_schema` — Input parameters (JSON Schema) for each tool
+- `tools.output_schema` — Output format for each tool
+- `tools.capability_tags` — Structured capability metadata
+- `llm_backbone` — LLM powering the agent
+- `mcp_server_url` — Server endpoint (TAAFT ≠ MCP servers)
+
+**Pipeline compatibility:**
+- ✅ `agent-indexing` — Works (uses name + description + capabilities)
+- ❌ `probing-pipeline` — Does not work (needs detailed tool specs to probe with)
+
+**Reason:** TAAFT lists black-box SaaS consumer products; MCP needs developer APIs with tool specifications.
+
 ## File structure
 
 ```
